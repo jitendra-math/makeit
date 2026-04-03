@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Design Canvas</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+</head>
+<body>
+
+    <header class="app-header">
+        <div class="logo">Design<span>Canvas</span></div>
+        <button id="download-btn" class="primary-btn">Download Full HD</button>
+    </header>
+
+    <main class="app-container">
+        <section class="editor-section">
+            <div class="section-header">
+                <h3>Paste AI Code Here (HTML/Tailwind/SVG)</h3>
+            </div>
+            <textarea id="code-input" placeholder="<div class='bg-blue-500 text-white p-8 rounded-xl'>\n  <h1>Hello World</h1>\n</div>"></textarea>
+        </section>
+
+        <section class="preview-section">
+            <div class="section-header">
+                <h3>Live Preview</h3>
+            </div>
+            <div class="canvas-wrapper">
+                <div id="render-area"></div>
+            </div>
+        </section>
+    </main>
+
+    <script src="script.js"></script>
+</body>
+</html>
