@@ -3,10 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Design Canvas</title>
+    <title>AI Design Canvas – Pro</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="style.css">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <!-- Security & Modern Export -->
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/html-to-image@1.11.11/dist/html-to-image.js"></script>
 </head>
 <body>
 
@@ -18,7 +20,7 @@
     <main class="app-container">
         <section class="editor-section">
             <div class="section-header">
-                <h3>Paste AI Code Here (HTML/Tailwind/SVG)</h3>
+                <h3>Paste AI Code Here (HTML/Tailwind/SVG) – Supports blur, backdrop, gradient text</h3>
             </div>
             <textarea id="code-input" placeholder="<div class='bg-blue-500 text-white p-8 rounded-xl'>\n  <h1>Hello World</h1>\n</div>"></textarea>
         </section>
