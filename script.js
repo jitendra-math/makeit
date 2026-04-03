@@ -3,33 +3,41 @@ document.addEventListener('DOMContentLoaded', () => {
     const renderArea = document.getElementById('render-area');
     const downloadBtn = document.getElementById('download-btn');
 
-    // ---------- Helper: Clean image URLs (remove brackets, spaces, etc.) ----------
+    // ---------- Helper: Clean image URLs (remove square brackets) ----------
     function cleanImageUrls(html) {
-        // Remove square brackets around src="[...]" 
-        // Regex to find src="[http...]" and replace with src="http..."
-        const cleaned = html.replace(/src="\[(.*?)\]"/g, 'src="$1"');
+        // Remove brackets around src="[...]"
+        let cleaned = html.replace(/src="\[(.*?)\]"/g, 'src="$1"');
+        // Also handle src='[...]'
+        cleaned = cleaned.replace(/src='\[(.*?)\]'/g, 'src="$1"');
         return cleaned;
     }
 
-    // ---------- Helper: Force crossorigin on all images ----------
-    function fixImageCrossOrigin() {
+    // ---------- Helper: Force crossorigin and fix image loading ----------
+    function fixImages() {
         const images = renderArea.querySelectorAll('img');
         images.forEach(img => {
+            // Set crossorigin attribute
             if (!img.hasAttribute('crossorigin')) {
                 img.setAttribute('crossorigin', 'anonymous');
             }
-            // Log image URL for debugging
-            console.log('Image:', img.src, 'Crossorigin:', img.crossOrigin);
-            // Add onerror handler to detect load failures
+            // If src is still invalid, log error
+            if (!img.src || img.src === '') {
+                console.warn('Image with empty src');
+                return;
+            }
+            // Add onerror handler for debugging
             img.onerror = () => {
                 console.error('Failed to load image:', img.src);
-                // Optionally show a placeholder
-                img.style.outline = '2px solid red';
+                // Optional: show fallback
+                img.style.border = '2px solid red';
+            };
+            img.onload = () => {
+                console.log('Image loaded:', img.src);
             };
         });
     }
 
-    // ---------- Sanitization config (allow all needed attributes) ----------
+    // ---------- Sanitization config ----------
     const purifyConfig = {
         ALLOWED_TAGS: [
             'div', 'span', 'h1', 'h2', 'h3', 'h4', 'p', 'a', 'img', 'button',
@@ -45,22 +53,22 @@ document.addEventListener('DOMContentLoaded', () => {
             'r', 'rx', 'ry', 'x', 'y', 'type', 'placeholder', 'value',
             'disabled', 'checked', 'selected', 'xmlns', 'transform', 'stroke-width',
             'stroke-linecap', 'stroke-linejoin',
-            'crossorigin', 'onerror'   // onerror for debugging (but won't execute due to DOMPurify? Actually DOMPurify removes event handlers, so better to add via JS)
+            'crossorigin'   // Allow crossorigin attribute
         ]
     };
 
     // Function to safely render HTML
     function renderCode(code) {
-        // First, clean image URLs (remove brackets)
+        // 1. Clean image URLs (remove brackets)
         let cleanedCode = cleanImageUrls(code);
-        // Sanitize
+        // 2. Sanitize
         const clean = DOMPurify.sanitize(cleanedCode, purifyConfig);
         renderArea.innerHTML = clean;
-        // After inserting, fix crossorigin attributes
-        fixImageCrossOrigin();
+        // 3. Fix crossorigin and load images
+        fixImages();
     }
 
-    // No default code – textarea khali
+    // No default code – textarea empty
     codeInput.value = '';
     renderArea.innerHTML = '';
 
@@ -73,30 +81,28 @@ document.addEventListener('DOMContentLoaded', () => {
         }, 150);
     });
 
-    // ---------- DOWNLOAD with html-to-image (robust CORS handling) ----------
+    // ---------- DOWNLOAD with html-to-image (CORS supported) ----------
     downloadBtn.addEventListener('click', async () => {
         if (renderArea.innerText.trim() === '' && renderArea.children.length === 0) {
-            alert('Bhai, pehle kuch code toh paste karo!');
+            alert('Bhai, pehle kuch code paste karo!');
             return;
         }
 
-        // Ensure all images have crossorigin and wait for them to load (or at least try)
-        fixImageCrossOrigin();
+        // Ensure all images have crossorigin set
+        fixImages();
 
-        // Wait for all images to load (best effort)
+        // Wait for images to load (best effort)
         const images = Array.from(renderArea.querySelectorAll('img'));
-        if (images.length > 0) {
-            await Promise.all(images.map(img => {
-                if (img.complete) return Promise.resolve();
-                return new Promise((resolve) => {
-                    img.onload = resolve;
-                    img.onerror = () => {
-                        console.warn('Image failed to load, continuing anyway:', img.src);
-                        resolve();
-                    };
-                });
-            }));
-        }
+        await Promise.all(images.map(img => {
+            if (img.complete) return Promise.resolve();
+            return new Promise((resolve) => {
+                img.onload = resolve;
+                img.onerror = () => {
+                    console.warn('Image failed to load:', img.src);
+                    resolve(); // continue anyway
+                };
+            });
+        }));
 
         const originalText = downloadBtn.innerText;
         downloadBtn.innerText = 'Generating HD Image...';
@@ -104,19 +110,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
         try {
             await document.fonts.ready;
-            await new Promise(resolve => setTimeout(resolve, 100));
+            await new Promise(r => setTimeout(r, 100));
 
             const pixelRatio = Math.min(3, Math.max(2, window.devicePixelRatio || 1));
             
-            // Use html-to-image with CORS settings
+            // Use html-to-image with CORS enabled
             const dataUrl = await htmlToImage.toPng(renderArea, {
                 pixelRatio: pixelRatio,
                 backgroundColor: null,
                 cacheBust: true,
-                skipAutoScale: false,
-                // Important for CORS images
-                useCORS: true,
-                allowTaint: false
+                useCORS: true,      // critical for cross-origin images
+                allowTaint: false,
+                skipAutoScale: false
             });
 
             const link = document.createElement('a');
@@ -126,9 +131,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
         } catch (error) {
             console.error('Export Error:', error);
-            let errorMsg = 'Image banate waqt error: ' + (error.message || 'Unknown');
-            if (error.message && error.message.includes('tainted')) {
-                errorMsg = 'Cross-origin images ki wajah se export fail. Ensure your CDN sends Access-Control-Allow-Origin: * header.';
+            let errorMsg = 'Kuch gadbad ho gayi image banate waqt.';
+            if (error.message && (error.message.includes('tainted') || error.message.includes('CORS'))) {
+                errorMsg = 'CORS issue: Ensure your CDN sends Access-Control-Allow-Origin header and images have crossorigin="anonymous".';
+            } else if (error.message) {
+                errorMsg = `Error: ${error.message.substring(0, 100)}`;
             }
             alert(errorMsg);
         } finally {
