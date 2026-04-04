@@ -3,15 +3,26 @@ document.addEventListener('DOMContentLoaded', () => {
     const renderArea = document.getElementById('render-area');
     const downloadBtn = document.getElementById('download-btn');
 
-    // ---------- Advanced: Clean image URLs (handles markdown-style [url](url) and [url]) ----------
+    // ---------- FIX: Shadow/Border-radius artifact prevention ----------
+    const styleFix = document.createElement('style');
+    styleFix.textContent = `
+        #render-area * {
+            transform: translateZ(0);
+            backface-visibility: hidden;
+            -webkit-font-smoothing: antialiased;
+        }
+        /* Subtle inset outline to smooth shadow edges */
+        #render-area > div {
+            box-shadow: 0 0 0 0.5px rgba(0,0,0,0.02) inset, var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
+        }
+    `;
+    document.head.appendChild(styleFix);
+
+    // ---------- Helper: Clean image URLs (handles [url](url) and [url]) ----------
     function cleanImageUrls(html) {
-        // Pattern 1: src="[url](url)" -> src="url"
         let cleaned = html.replace(/src="\[(.*?)\]\(.*?\)"/g, 'src="$1"');
-        // Pattern 2: src='[url](url)' -> src='url'
         cleaned = cleaned.replace(/src='\[(.*?)\]\(.*?\)'/g, 'src="$1"');
-        // Pattern 3: src="[url]" -> src="url"
         cleaned = cleaned.replace(/src="\[(.*?)\]"/g, 'src="$1"');
-        // Pattern 4: src='[url]' -> src='url'
         cleaned = cleaned.replace(/src='\[(.*?)\]'/g, 'src="$1"');
         return cleaned;
     }
@@ -64,6 +75,7 @@ document.addEventListener('DOMContentLoaded', () => {
         fixImages();
     }
 
+    // No default code
     codeInput.value = '';
     renderArea.innerHTML = '';
 
@@ -75,6 +87,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }, 150);
     });
 
+    // ---------- DOWNLOAD with artifact fixes (toCanvas + white bg + smoothing) ----------
     downloadBtn.addEventListener('click', async () => {
         if (renderArea.innerText.trim() === '' && renderArea.children.length === 0) {
             alert('Bhai, pehle kuch code paste karo!');
@@ -104,15 +117,29 @@ document.addEventListener('DOMContentLoaded', () => {
             await new Promise(r => setTimeout(r, 100));
 
             const pixelRatio = Math.min(3, Math.max(2, window.devicePixelRatio || 1));
-            const dataUrl = await htmlToImage.toPng(renderArea, {
+            // Use toCanvas instead of toPng for better control over rendering
+            const canvas = await htmlToImage.toCanvas(renderArea, {
                 pixelRatio: pixelRatio,
-                backgroundColor: null,
+                backgroundColor: '#ffffff',   // white background reduces shadow clipping artifacts
                 cacheBust: true,
                 useCORS: true,
                 allowTaint: false,
-                skipAutoScale: false
+                skipAutoScale: false,
+                canvasWidth: renderArea.scrollWidth * pixelRatio,
+                canvasHeight: renderArea.scrollHeight * pixelRatio,
+                style: {
+                    transform: 'scale(1)',
+                    transformOrigin: 'top left',
+                    imageRendering: 'high-quality'
+                }
             });
 
+            // Enable high-quality image smoothing
+            const ctx = canvas.getContext('2d');
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = 'high';
+
+            const dataUrl = canvas.toDataURL('image/png');
             const link = document.createElement('a');
             link.download = 'design-canvas-export.png';
             link.href = dataUrl;
