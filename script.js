@@ -3,17 +3,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const renderArea = document.getElementById('render-area');
     const downloadBtn = document.getElementById('download-btn');
 
-    // ---------- FIX: Shadow/Border-radius artifact prevention ----------
+    // ---------- FIX: Anti-aliasing ONLY (No forced shadows) ----------
     const styleFix = document.createElement('style');
     styleFix.textContent = `
         #render-area * {
-            transform: translateZ(0);
-            backface-visibility: hidden;
             -webkit-font-smoothing: antialiased;
-        }
-        /* Subtle inset outline to smooth shadow edges */
-        #render-area > div {
-            box-shadow: 0 0 0 0.5px rgba(0,0,0,0.02) inset, var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
+            -moz-osx-font-smoothing: grayscale;
         }
     `;
     document.head.appendChild(styleFix);
@@ -87,7 +82,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }, 150);
     });
 
-    // ---------- DOWNLOAD with artifact fixes (toCanvas + white bg + smoothing) ----------
+    // ---------- DOWNLOAD with artifact fixes (toCanvas + padding fix + smoothing) ----------
     downloadBtn.addEventListener('click', async () => {
         if (renderArea.innerText.trim() === '' && renderArea.children.length === 0) {
             alert('Bhai, pehle kuch code paste karo!');
@@ -117,22 +112,32 @@ document.addEventListener('DOMContentLoaded', () => {
             await new Promise(r => setTimeout(r, 100));
 
             const pixelRatio = Math.min(3, Math.max(2, window.devicePixelRatio || 1));
-            // Use toCanvas instead of toPng for better control over rendering
+            
+            // --- FIX: Temporary padding for shadow bleed ---
+            const originalPadding = renderArea.style.padding;
+            renderArea.style.padding = '48px'; // 48px gives enough space for shadows
+            
+            const captureWidth = renderArea.scrollWidth;
+            const captureHeight = renderArea.scrollHeight;
+
             const canvas = await htmlToImage.toCanvas(renderArea, {
                 pixelRatio: pixelRatio,
-                backgroundColor: '#ffffff',   // white background reduces shadow clipping artifacts
+                backgroundColor: '#ffffff',
                 cacheBust: true,
                 useCORS: true,
                 allowTaint: false,
                 skipAutoScale: false,
-                canvasWidth: renderArea.scrollWidth * pixelRatio,
-                canvasHeight: renderArea.scrollHeight * pixelRatio,
+                canvasWidth: captureWidth * pixelRatio,
+                canvasHeight: captureHeight * pixelRatio,
                 style: {
                     transform: 'scale(1)',
                     transformOrigin: 'top left',
-                    imageRendering: 'high-quality'
+                    margin: '0',
                 }
             });
+
+            // --- Reset padding instantly ---
+            renderArea.style.padding = originalPadding;
 
             // Enable high-quality image smoothing
             const ctx = canvas.getContext('2d');
@@ -141,7 +146,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const dataUrl = canvas.toDataURL('image/png');
             const link = document.createElement('a');
-            link.download = 'design-canvas-export.png';
+            link.download = 'jss-design-canvas-export.png';
             link.href = dataUrl;
             link.click();
 
