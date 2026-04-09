@@ -1,4 +1,3 @@
-/* Google Fonts - Inter */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
 
 * {
@@ -16,7 +15,6 @@ body {
     flex-direction: column;
 }
 
-/* Header */
 .app-header {
     display: flex;
     justify-content: space-between;
@@ -50,7 +48,6 @@ body {
     background-color: #005bb5;
 }
 
-/* Main Layout */
 .app-container {
     display: flex;
     flex: 1;
@@ -81,7 +78,6 @@ body {
     font-weight: 500;
 }
 
-/* Textarea */
 #code-input {
     flex: 1;
     width: 100%;
@@ -96,7 +92,6 @@ body {
     min-height: 200px;
 }
 
-/* Image Manager */
 .image-manager {
     border-top: 1px solid #e5e5ea;
     background: #fefefe;
@@ -123,7 +118,6 @@ body {
     font-size: 12px;
     font-weight: 500;
     cursor: pointer;
-    transition: 0.2s;
 }
 
 .upload-btn:hover {
@@ -147,8 +141,6 @@ body {
     width: 100px;
     padding: 8px;
     text-align: center;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.03);
-    transition: 0.1s;
 }
 
 .image-card img {
@@ -178,7 +170,6 @@ body {
     font-size: 11px;
     cursor: pointer;
     margin-top: 4px;
-    font-weight: 500;
 }
 
 .delete-asset:hover {
@@ -193,7 +184,6 @@ body {
     padding: 20px;
 }
 
-/* Preview area */
 .canvas-wrapper {
     flex: 1;
     padding: 40px;
