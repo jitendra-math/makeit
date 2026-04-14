@@ -52,7 +52,9 @@ document.addEventListener('DOMContentLoaded', () => {
             'footer', 'main', 'article', 'nav', 'aside', 'form', 'input',
             'label', 'table', 'tr', 'td', 'th', 'thead', 'tbody', 'br', 'hr',
             'strong', 'em', 'b', 'i', 'u', 'small', 'mark', 'figure', 'figcaption',
-            'blockquote', 'pre', 'code', 'iframe'
+            'blockquote', 'pre', 'code', 'iframe',
+            // --- FIX FOR TESTING ---
+            'link', 'style' // Allows FontAwesome CDN to be pasted directly in textarea
         ],
         ALLOWED_ATTR: [
             'class', 'id', 'style', 'src', 'alt', 'href', 'target', 'rel',
@@ -60,7 +62,9 @@ document.addEventListener('DOMContentLoaded', () => {
             'r', 'rx', 'ry', 'x', 'y', 'type', 'placeholder', 'value',
             'disabled', 'checked', 'selected', 'xmlns', 'transform', 'stroke-width',
             'stroke-linecap', 'stroke-linejoin',
-            'crossorigin'
+            'crossorigin', 
+            // --- FIX FOR TESTING ---
+            'integrity', 'referrerpolicy' // Required for secure CDN links
         ]
     };
 
@@ -86,17 +90,11 @@ document.addEventListener('DOMContentLoaded', () => {
     // ---------- PASTE BUTTON LOGIC ----------
     pasteBtn.addEventListener('click', async () => {
         try {
-            // Clipboard se text read karna
             const text = await navigator.clipboard.readText();
-            
             if (text) {
-                // Textarea mein value daalna
                 codeInput.value = text;
-                
-                // 'input' event trigger karna taaki debounce timer aur render logic chale
                 codeInput.dispatchEvent(new Event('input'));
                 
-                // UI feedback 
                 const originalText = pasteBtn.innerText;
                 pasteBtn.innerText = 'Pasted! ✓';
                 pasteBtn.style.backgroundColor = '#e8f5e9'; 
@@ -109,12 +107,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 }, 2000);
             }
         } catch (err) {
-            console.error('Failed to read clipboard contents: ', err);
+            console.error('Failed to read clipboard: ', err);
             alert('Bhai, browser ko clipboard permission deni padegi (Allow pe click karna).');
         }
     });
 
-    // ---------- DOWNLOAD with artifact fixes (toCanvas + padding fix + smoothing) ----------
+    // ---------- DOWNLOAD LOGIC ----------
     downloadBtn.addEventListener('click', async () => {
         if (renderArea.innerText.trim() === '' && renderArea.children.length === 0) {
             alert('Bhai, pehle kuch code paste karo!');
@@ -128,10 +126,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (img.complete) return Promise.resolve();
             return new Promise((resolve) => {
                 img.onload = resolve;
-                img.onerror = () => {
-                    console.warn('Image failed to load:', img.src);
-                    resolve();
-                };
+                img.onerror = () => resolve();
             });
         }));
 
@@ -141,15 +136,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
         try {
             await document.fonts.ready;
-            await new Promise(r => setTimeout(r, 100));
+            // Extra delay given for external fonts to properly render before canvas captures them
+            await new Promise(r => setTimeout(r, 500)); 
 
             const pixelRatio = Math.min(3, Math.max(2, window.devicePixelRatio || 1));
-            
-            // --- FIX: Temporary padding for shadow bleed ---
             const originalPadding = renderArea.style.padding;
-            renderArea.style.padding = '48px'; // 48px gives enough space for shadows
+            renderArea.style.padding = '48px'; 
             
-            // --- EXACT PIXEL CALCULATION FIX ---
             const rect = renderArea.getBoundingClientRect();
             const captureWidth = rect.width;
             const captureHeight = rect.height;
@@ -158,7 +151,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 pixelRatio: pixelRatio,
                 backgroundColor: '#ffffff',
                 cacheBust: true,
-                useCORS: true,
+                useCORS: true, 
                 allowTaint: false,
                 skipAutoScale: false,
                 canvasWidth: captureWidth * pixelRatio,
@@ -170,10 +163,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             });
 
-            // --- Reset padding instantly ---
             renderArea.style.padding = originalPadding;
 
-            // Enable high-quality image smoothing
             const ctx = canvas.getContext('2d');
             ctx.imageSmoothingEnabled = true;
             ctx.imageSmoothingQuality = 'high';
@@ -186,13 +177,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         } catch (error) {
             console.error('Export Error:', error);
-            let errorMsg = 'Kuch gadbad ho gayi image banate waqt.';
-            if (error.message && (error.message.includes('tainted') || error.message.includes('CORS'))) {
-                errorMsg = 'CORS issue: Ensure your CDN sends Access-Control-Allow-Origin header and images have crossorigin="anonymous".';
-            } else if (error.message) {
-                errorMsg = `Error: ${error.message.substring(0, 100)}`;
-            }
-            alert(errorMsg);
+            alert(`Kuch gadbad ho gayi. Error: ${error.message.substring(0, 100)}`);
         } finally {
             downloadBtn.innerText = originalText;
             downloadBtn.disabled = false;

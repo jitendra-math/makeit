@@ -126,12 +126,11 @@ body {
     display: flex;
     justify-content: center;
     align-items: center;
-    background-color: #e5e5ea; /* Checkerboard background bhi laga sakte ho transparent feel ke liye */
+    background-color: #e5e5ea; 
     overflow: auto;
 }
 
 #render-area {
     background-color: transparent;
     transition: all 0.3s ease;
-    /* Agar poster/logo ka koi default size dena ho toh yahan de sakte ho, warna code se decide hoga */
 }
