@@ -2,7 +2,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const codeInput = document.getElementById('code-input');
     const renderArea = document.getElementById('render-area');
     const downloadBtn = document.getElementById('download-btn');
-    const pasteBtn = document.getElementById('paste-btn'); // Naya button element select kiya
+    const pasteBtn = document.getElementById('paste-btn');
 
     // ---------- FIX: Anti-aliasing ONLY (No forced shadows) ----------
     const styleFix = document.createElement('style');
@@ -149,8 +149,10 @@ document.addEventListener('DOMContentLoaded', () => {
             const originalPadding = renderArea.style.padding;
             renderArea.style.padding = '48px'; // 48px gives enough space for shadows
             
-            const captureWidth = renderArea.scrollWidth;
-            const captureHeight = renderArea.scrollHeight;
+            // --- EXACT PIXEL CALCULATION FIX ---
+            const rect = renderArea.getBoundingClientRect();
+            const captureWidth = rect.width;
+            const captureHeight = rect.height;
 
             const canvas = await htmlToImage.toCanvas(renderArea, {
                 pixelRatio: pixelRatio,
