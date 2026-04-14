@@ -3,6 +3,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const renderArea = document.getElementById('render-area');
     const downloadBtn = document.getElementById('download-btn');
     const pasteBtn = document.getElementById('paste-btn');
+    const cloudSaveBtn = document.getElementById('cloud-save-btn'); // Naya Button
 
     // ---------- FIX: Anti-aliasing ONLY (No forced shadows) ----------
     const styleFix = document.createElement('style');
@@ -53,8 +54,7 @@ document.addEventListener('DOMContentLoaded', () => {
             'label', 'table', 'tr', 'td', 'th', 'thead', 'tbody', 'br', 'hr',
             'strong', 'em', 'b', 'i', 'u', 'small', 'mark', 'figure', 'figcaption',
             'blockquote', 'pre', 'code', 'iframe',
-            // --- FIX FOR TESTING ---
-            'link', 'style' // Allows FontAwesome CDN to be pasted directly in textarea
+            'link', 'style' 
         ],
         ALLOWED_ATTR: [
             'class', 'id', 'style', 'src', 'alt', 'href', 'target', 'rel',
@@ -63,8 +63,7 @@ document.addEventListener('DOMContentLoaded', () => {
             'disabled', 'checked', 'selected', 'xmlns', 'transform', 'stroke-width',
             'stroke-linecap', 'stroke-linejoin',
             'crossorigin', 
-            // --- FIX FOR TESTING ---
-            'integrity', 'referrerpolicy' // Required for secure CDN links
+            'integrity', 'referrerpolicy' 
         ]
     };
 
@@ -75,7 +74,6 @@ document.addEventListener('DOMContentLoaded', () => {
         fixImages();
     }
 
-    // No default code
     codeInput.value = '';
     renderArea.innerHTML = '';
 
@@ -136,7 +134,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
         try {
             await document.fonts.ready;
-            // Extra delay given for external fonts to properly render before canvas captures them
             await new Promise(r => setTimeout(r, 500)); 
 
             const pixelRatio = Math.min(3, Math.max(2, window.devicePixelRatio || 1));
@@ -181,6 +178,103 @@ document.addEventListener('DOMContentLoaded', () => {
         } finally {
             downloadBtn.innerText = originalText;
             downloadBtn.disabled = false;
+        }
+    });
+
+    // ---------- GITHUB CLOUD SAVE LOGIC ----------
+    
+    // UTF-8 Safe Base64 Encoding
+    function encodeBase64Safe(text) {
+        const bytes = new TextEncoder().encode(text);
+        const binString = Array.from(bytes, (byte) => String.fromCodePoint(byte)).join("");
+        return btoa(binString);
+    }
+
+    cloudSaveBtn.addEventListener('click', async () => {
+        const codeContent = codeInput.value.trim();
+        
+        if (!codeContent) {
+            alert('Bhai, save karne ke liye pehle kuch design code paste karo!');
+            return;
+        }
+
+        let githubToken = localStorage.getItem('gh_canvas_token');
+        
+        if (!githubToken) {
+            githubToken = prompt("Apna GitHub PAT (Personal Access Token) enter karo.\n'repo' scope tick hona zaroori hai:");
+            if (!githubToken) return;
+            localStorage.setItem('gh_canvas_token', githubToken.trim());
+        }
+
+        const originalText = cloudSaveBtn.innerHTML;
+        cloudSaveBtn.innerHTML = 'Saving... ⏳';
+        cloudSaveBtn.disabled = true;
+
+        try {
+            // Fetch User Data to get username automatically
+            const userRes = await fetch('https://api.github.com/user', {
+                headers: { 
+                    'Authorization': `Bearer ${githubToken}`,
+                    'Accept': 'application/vnd.github.v3+json'
+                }
+            });
+
+            if (!userRes.ok) {
+                localStorage.removeItem('gh_canvas_token');
+                throw new Error("Invalid Token. Puraana token delete kar diya hai, dobara click karke naya daalo.");
+            }
+
+            const userData = await userRes.json();
+            const username = userData.login;
+            const repoName = "My-Canvas-Designs"; // Apne GitHub pe yeh repo bana lena!
+
+            // Generate unique filename
+            const randomId = Math.random().toString(36).substring(2, 8);
+            const fileName = `design_${Date.now()}_${randomId}.html`;
+            
+            const base64Content = encodeBase64Safe(codeContent);
+
+            // Upload directly to GitHub
+            const saveRes = await fetch(`https://api.github.com/repos/${username}/${repoName}/contents/${fileName}`, {
+                method: 'PUT',
+                headers: {
+                    'Authorization': `Bearer ${githubToken}`,
+                    'Accept': 'application/vnd.github.v3+json',
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    message: `Canvas save: ${fileName} 🚀`,
+                    content: base64Content
+                })
+            });
+
+            if (!saveRes.ok) {
+                const errData = await saveRes.json();
+                if (errData.message.includes("Not Found")) {
+                    throw new Error(`'${repoName}' repository nahi mili! GitHub par ek naya khali repo banao.`);
+                }
+                throw new Error(errData.message);
+            }
+
+            // Success feedback
+            cloudSaveBtn.innerHTML = 'Saved! ✅';
+            cloudSaveBtn.style.backgroundColor = '#e8f5e9';
+            cloudSaveBtn.style.borderColor = '#c8e6c9';
+            cloudSaveBtn.style.color = '#2e7d32';
+
+        } catch (error) {
+            console.error("Cloud Save Error:", error);
+            alert(`Error: ${error.message}`);
+            cloudSaveBtn.innerHTML = '<i class="fa-brands fa-github"></i> Failed';
+        } finally {
+            setTimeout(() => {
+                // Reset button to original state
+                cloudSaveBtn.innerHTML = '<i class="fa-brands fa-github"></i> Save to Cloud';
+                cloudSaveBtn.style.backgroundColor = '#fafbfc';
+                cloudSaveBtn.style.borderColor = '#d1d5da';
+                cloudSaveBtn.style.color = '#24292e';
+                cloudSaveBtn.disabled = false;
+            }, 3000);
         }
     });
 });
