@@ -18,7 +18,7 @@
         <div class="logo">Design<span>Canvas</span></div>
         <div class="header-actions">
             <button id="cloud-save-btn" class="secondary-btn" style="color: #24292e; border-color: #d1d5da; background: #fafbfc;">
-                <i class="fa-brands fa-github"></i> Save to Cloud
+                <i class="fa-brands fa-github"></i> Save to Project
             </button>
             <button id="paste-btn" class="secondary-btn">Paste Code</button>
             <button id="download-btn" class="primary-btn">Download Full HD</button>
@@ -42,6 +42,25 @@
             </div>
         </section>
     </main>
+
+    <div class="modal-overlay" id="save-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Save to Project (Version Control)</h3>
+                <button class="close-modal" id="close-modal-btn"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="modal-body">
+                <button class="new-folder-btn" id="new-folder-btn">
+                    <i class="fa-solid fa-folder-plus"></i> Create New Project
+                </button>
+                <div class="folder-list" id="folder-list">
+                    <p style="text-align: center; color: #888; font-size: 14px; padding: 20px;">
+                        <i class="fa-solid fa-spinner fa-spin"></i> Fetching folders...
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <script src="script.js"></script>
 </body>
