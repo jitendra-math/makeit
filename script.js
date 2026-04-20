@@ -15,7 +15,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const REPO_NAME = "My-Canvas-Designs";
     let githubUser = null;
 
-    // ---------- FIX: Anti-aliasing ONLY (No forced shadows) ----------
+    // ---------- Anti-aliasing ONLY ----------
     const styleFix = document.createElement('style');
     styleFix.textContent = `
         #render-area * {
@@ -24,6 +24,87 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     `;
     document.head.appendChild(styleFix);
+
+    // ==========================================
+    // 🔧 SHADOW FIX: box-shadow → filter:drop-shadow
+    // html-to-image SVG foreignObject mein box-shadow ka blur
+    // Chrome renderer skip kar deta hai — isliye solid dikhta hai.
+    // Fix: capture se pehle box-shadow hata ke filter:drop-shadow() lagao,
+    // capture ke baad wapas restore karo.
+    // ==========================================
+
+    function parseShadowLayers(shadowStr) {
+        // rgba() ke andar commas hote hain, isliye simple split nahi chalega
+        const layers = [];
+        let depth = 0, curr = '';
+        for (const ch of shadowStr + ',') {
+            if (ch === '(') { depth++; curr += ch; }
+            else if (ch === ')') { depth--; curr += ch; }
+            else if (ch === ',' && depth === 0) {
+                const t = curr.trim();
+                if (t) layers.push(t);
+                curr = '';
+            } else { curr += ch; }
+        }
+        return layers;
+    }
+
+    function boxShadowToDropShadow(computedShadow) {
+        if (!computedShadow || computedShadow === 'none') return '';
+        const layers = parseShadowLayers(computedShadow);
+        const drops = [];
+
+        layers.forEach(layer => {
+            // inset shadows drop-shadow mein convert nahi hoti
+            if (/\binset\b/.test(layer)) return;
+
+            // Browser always normalized format deta hai:
+            // "rgba(r, g, b, a) Xpx Ypx BlurPx SpreadPx"
+            const colorMatch = layer.match(/rgba?\([^)]+\)/);
+            const lengths = [...layer.matchAll(/([-\d.]+px)/g)].map(m => m[0]);
+
+            if (colorMatch && lengths.length >= 2) {
+                const x     = lengths[0];
+                const y     = lengths[1];
+                const blur  = lengths[2] || '0px';
+                // lengths[3] = spread — drop-shadow support nahi karta, skip
+                drops.push(`drop-shadow(${x} ${y} ${blur} ${colorMatch[0]})`);
+            }
+        });
+
+        return drops.join(' ');
+    }
+
+    function applyExportFix(root) {
+        const snapshot = [];
+        [root, ...root.querySelectorAll('*')].forEach(el => {
+            const computed = getComputedStyle(el).boxShadow;
+            if (!computed || computed === 'none') return;
+
+            const dropFilter = boxShadowToDropShadow(computed);
+            if (!dropFilter) return;
+
+            // Original inline values save karo (restore ke liye)
+            snapshot.push({
+                el,
+                filter: el.style.filter,
+                boxShadow: el.style.boxShadow
+            });
+
+            el.style.boxShadow = 'none';
+            el.style.filter = el.style.filter
+                ? `${el.style.filter} ${dropFilter}`
+                : dropFilter;
+        });
+        return snapshot;
+    }
+
+    function revertExportFix(snapshot) {
+        snapshot.forEach(({ el, filter, boxShadow }) => {
+            el.style.filter    = filter;
+            el.style.boxShadow = boxShadow;
+        });
+    }
 
     // ---------- Helper: Clean image URLs ----------
     function cleanImageUrls(html) {
@@ -52,14 +133,14 @@ document.addEventListener('DOMContentLoaded', () => {
             'footer', 'main', 'article', 'nav', 'aside', 'form', 'input',
             'label', 'table', 'tr', 'td', 'th', 'thead', 'tbody', 'br', 'hr',
             'strong', 'em', 'b', 'i', 'u', 'small', 'mark', 'figure', 'figcaption',
-            'blockquote', 'pre', 'code', 'iframe', 'link', 'style' 
+            'blockquote', 'pre', 'code', 'iframe', 'link', 'style'
         ],
         ALLOWED_ATTR: [
             'class', 'id', 'style', 'src', 'alt', 'href', 'target', 'rel',
             'width', 'height', 'fill', 'stroke', 'viewBox', 'd', 'cx', 'cy',
             'r', 'rx', 'ry', 'x', 'y', 'type', 'placeholder', 'value',
             'disabled', 'checked', 'selected', 'xmlns', 'transform', 'stroke-width',
-            'stroke-linecap', 'stroke-linejoin', 'crossorigin', 'integrity', 'referrerpolicy' 
+            'stroke-linecap', 'stroke-linejoin', 'crossorigin', 'integrity', 'referrerpolicy'
         ]
     };
 
@@ -88,7 +169,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 codeInput.dispatchEvent(new Event('input'));
                 const originalText = pasteBtn.innerText;
                 pasteBtn.innerText = 'Pasted! ✓';
-                pasteBtn.style.backgroundColor = '#e8f5e9'; 
+                pasteBtn.style.backgroundColor = '#e8f5e9';
                 pasteBtn.style.borderColor = '#c8e6c9';
                 setTimeout(() => {
                     pasteBtn.innerText = originalText;
@@ -99,44 +180,64 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (err) { alert('Browser ko clipboard permission allow karo bhai.'); }
     });
 
-    // ---------- DOWNLOAD LOGIC ----------
+    // ---------- DOWNLOAD LOGIC (Shadow Fix Applied) ----------
     downloadBtn.addEventListener('click', async () => {
-        if (renderArea.innerText.trim() === '' && renderArea.children.length === 0) return alert('Bhai, pehle kuch code paste karo!');
+        if (renderArea.innerText.trim() === '' && renderArea.children.length === 0)
+            return alert('Bhai, pehle kuch code paste karo!');
+
         fixImages();
-        
-        const originalText = downloadBtn.innerText;
+
+        const originalText    = downloadBtn.innerText;
+        const originalPadding = renderArea.style.padding;
+        let shadowSnapshot    = [];
+
         downloadBtn.innerText = 'Generating HD Image...';
-        downloadBtn.disabled = true;
+        downloadBtn.disabled  = true;
 
         try {
             await document.fonts.ready;
-            await new Promise(r => setTimeout(r, 500)); 
+            await new Promise(r => setTimeout(r, 500));
+
+            renderArea.style.padding = '48px';
+
+            // 🔧 box-shadow → filter:drop-shadow (blur fix)
+            shadowSnapshot = applyExportFix(renderArea);
+
+            // Styles settle hone do before capture
+            await new Promise(r => setTimeout(r, 60));
 
             const pixelRatio = Math.min(3, Math.max(2, window.devicePixelRatio || 1));
-            const originalPadding = renderArea.style.padding;
-            renderArea.style.padding = '48px'; 
-            
             const rect = renderArea.getBoundingClientRect();
+
             const canvas = await htmlToImage.toCanvas(renderArea, {
-                pixelRatio: pixelRatio, backgroundColor: '#ffffff',
-                cacheBust: true, useCORS: true, allowTaint: false, skipAutoScale: false,
-                canvasWidth: rect.width * pixelRatio, canvasHeight: rect.height * pixelRatio,
+                pixelRatio:    pixelRatio,
+                backgroundColor: '#ffffff',
+                cacheBust:     true,
+                useCORS:       true,
+                allowTaint:    false,
+                skipAutoScale: false,
+                canvasWidth:   rect.width  * pixelRatio,
+                canvasHeight:  rect.height * pixelRatio,
                 style: { transform: 'scale(1)', transformOrigin: 'top left', margin: '0' }
             });
 
-            renderArea.style.padding = originalPadding;
-            canvas.getContext('2d').imageSmoothingEnabled = true;
-            canvas.getContext('2d').imageSmoothingQuality = 'high';
+            const ctx = canvas.getContext('2d');
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = 'high';
 
             const link = document.createElement('a');
             link.download = 'jss-design-canvas-export.png';
             link.href = canvas.toDataURL('image/png');
             link.click();
+
         } catch (error) {
             alert(`Kuch gadbad ho gayi. Error: ${error.message.substring(0, 100)}`);
         } finally {
-            downloadBtn.innerText = originalText;
-            downloadBtn.disabled = false;
+            // Always restore — even on error
+            revertExportFix(shadowSnapshot);
+            renderArea.style.padding = originalPadding;
+            downloadBtn.innerText    = originalText;
+            downloadBtn.disabled     = false;
         }
     });
 
@@ -167,7 +268,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const token = getToken();
         if (!token) return alert('Token ke bina kaam nahi chalega bhai 😭');
 
-        saveModal.classList.add('active'); // Open Modal
+        saveModal.classList.add('active');
         await fetchFolders(token);
     });
 
@@ -178,7 +279,9 @@ document.addEventListener('DOMContentLoaded', () => {
         folderListContainer.innerHTML = '<p style="text-align:center; color:#888; font-size:14px;"><i class="fa-solid fa-spinner fa-spin"></i> Fetching folders...</p>';
         try {
             if (!githubUser) {
-                const userRes = await fetch('https://api.github.com/user', { headers: { 'Authorization': `Bearer ${token}` } });
+                const userRes = await fetch('https://api.github.com/user', {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
                 if (!userRes.ok) {
                     localStorage.removeItem('gh_canvas_token');
                     throw new Error("Invalid token bhai, refresh karke wapas daal.");
@@ -192,12 +295,13 @@ document.addEventListener('DOMContentLoaded', () => {
             });
 
             if (!repoRes.ok) {
-                if (repoRes.status === 404) throw new Error(`Repository '${REPO_NAME}' nahi mili. GitHub pe ek public/private repo bana de is naam se.`);
+                if (repoRes.status === 404)
+                    throw new Error(`Repository '${REPO_NAME}' nahi mili. GitHub pe ek public/private repo bana de is naam se.`);
                 throw new Error("GitHub se connect nahi ho paaya.");
             }
 
             const data = await repoRes.json();
-            const folders = data.filter(item => item.type === 'dir'); // Sirf folders
+            const folders = data.filter(item => item.type === 'dir');
 
             if (folders.length === 0) {
                 folderListContainer.innerHTML = '<p style="text-align:center; color:#888; font-size:13px; padding: 20px;">Koi project folder nahi hai. Naya banao!</p>';
@@ -208,9 +312,10 @@ document.addEventListener('DOMContentLoaded', () => {
             folders.forEach(folder => {
                 const item = document.createElement('div');
                 item.className = 'folder-item';
+                item.dataset.folder = folder.name;
                 item.innerHTML = `
                     <div class="folder-name"><i class="fa-solid fa-folder"></i> ${folder.name}</div>
-                    <button class="save-here-btn" onclick="saveToFolder('${folder.name}', this)">Save Here</button>
+                    <button class="save-here-btn">Save Here</button>
                 `;
                 folderListContainer.appendChild(item);
             });
@@ -220,42 +325,44 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // 2. New Folder Button (Creates virtual path)
+    // Event delegation — no more window.saveToFolder
+    folderListContainer.addEventListener('click', (e) => {
+        if (e.target.classList.contains('save-here-btn')) {
+            const folderName = e.target.closest('.folder-item').dataset.folder;
+            saveToFolder(folderName, e.target);
+        }
+    });
+
+    // 2. New Folder Button
     newFolderBtn.addEventListener('click', () => {
         const folderName = prompt("Naye project (folder) ka naam batao (e.g., Dashboard_UI):");
         if (!folderName || folderName.trim() === '') return;
-        
-        // Remove spaces and special chars to make it GitHub friendly
         const safeFolderName = folderName.trim().replace(/[^a-zA-Z0-9_-]/g, "_");
-        
-        // Direct save to this new folder
         const tempBtn = document.createElement('button');
         saveToFolder(safeFolderName, tempBtn, true);
     });
 
-    // 3. The Brain: Save logic with Version Mapping (v1, v2, v3...)
-    window.saveToFolder = async function(folderName, btnElement, isNewFolder = false) {
+    // 3. Save Logic with Version Mapping (v1, v2, v3...)
+    async function saveToFolder(folderName, btnElement, isNewFolder = false) {
         const token = getToken();
         const codeContent = codeInput.value.trim();
-        
-        if (btnElement.innerText) {
+
+        if (btnElement.innerText !== undefined) {
             btnElement.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Saving';
             btnElement.disabled = true;
         }
 
         try {
             let nextVersion = 1;
-            
-            // Step A: Check existing files in folder to calculate 'vN'
-            const contentRes = await fetch(`https://api.github.com/repos/${githubUser}/${REPO_NAME}/contents/${folderName}`, {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
+
+            const contentRes = await fetch(
+                `https://api.github.com/repos/${githubUser}/${REPO_NAME}/contents/${folderName}`,
+                { headers: { 'Authorization': `Bearer ${token}` } }
+            );
 
             if (contentRes.ok) {
                 const files = await contentRes.json();
                 let maxVersion = 0;
-                
-                // Read all files starting with 'v' and ending with '.html'
                 files.forEach(f => {
                     const match = f.name.match(/^v(\d+)\.html$/);
                     if (match) {
@@ -263,50 +370,50 @@ document.addEventListener('DOMContentLoaded', () => {
                         if (verNum > maxVersion) maxVersion = verNum;
                     }
                 });
-                nextVersion = maxVersion + 1; // e.g., if v1 and v2 exist, next is v3
+                nextVersion = maxVersion + 1;
             } else if (contentRes.status !== 404) {
-                // If error is not 404 (Not Found), something else broke
                 throw new Error("Folder contents padhne mein error aayi.");
             }
-            // (If 404, it means folder is new/empty, so nextVersion remains 1)
 
             const fileName = `v${nextVersion}.html`;
             const filePath = `${folderName}/${fileName}`;
             const base64Content = encodeBase64Safe(codeContent);
 
-            // Step B: Save file directly via PUT
-            const saveRes = await fetch(`https://api.github.com/repos/${githubUser}/${REPO_NAME}/contents/${filePath}`, {
-                method: 'PUT',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    message: `Added ${fileName} to ${folderName} 🚀`,
-                    content: base64Content
-                })
-            });
+            const saveRes = await fetch(
+                `https://api.github.com/repos/${githubUser}/${REPO_NAME}/contents/${filePath}`,
+                {
+                    method: 'PUT',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        message: `Added ${fileName} to ${folderName} 🚀`,
+                        content: base64Content
+                    })
+                }
+            );
 
             if (!saveRes.ok) throw new Error("Save fail ho gaya bhai 😭");
 
-            // Success Updates
             if (isNewFolder) {
                 alert(`Naya folder '${folderName}' ban gaya aur design '${fileName}' save ho gayi! ✅`);
-                fetchFolders(token); // Reload folder list
+                const token2 = getToken();
+                fetchFolders(token2);
             } else {
                 btnElement.innerHTML = 'Saved! ✅';
                 btnElement.style.background = '#2e7d32';
                 setTimeout(() => {
-                    saveModal.classList.remove('active'); // Close modal
+                    saveModal.classList.remove('active');
                 }, 1000);
             }
 
         } catch (error) {
             alert(`Error: ${error.message}`);
-            if (btnElement.innerText) {
+            if (btnElement.innerText !== undefined) {
                 btnElement.innerHTML = 'Save Here';
                 btnElement.disabled = false;
             }
         }
-    };
+    }
 });
