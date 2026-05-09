@@ -118,7 +118,7 @@ document.addEventListener('DOMContentLoaded', () => {
             
             const rect = renderArea.getBoundingClientRect();
             const canvas = await htmlToImage.toCanvas(renderArea, {
-                pixelRatio: pixelRatio, backgroundColor: '#ffffff',
+                pixelRatio: pixelRatio, backgroundColor: null, // <-- FIXED: Changed from '#ffffff' to null
                 cacheBust: true, useCORS: true, allowTaint: false, skipAutoScale: false,
                 canvasWidth: rect.width * pixelRatio, canvasHeight: rect.height * pixelRatio,
                 style: { transform: 'scale(1)', transformOrigin: 'top left', margin: '0' }
