@@ -22,6 +22,13 @@ document.addEventListener('DOMContentLoaded', () => {
             -webkit-font-smoothing: antialiased;
             -moz-osx-font-smoothing: grayscale;
         }
+        /* Custom divider style for live preview of bulk designs */
+        .bulk-divider {
+            margin: 40px 0;
+            border: 0;
+            border-top: 3px dashed #cbd5e1;
+            width: 100%;
+        }
     `;
     document.head.appendChild(styleFix);
 
@@ -63,8 +70,14 @@ document.addEventListener('DOMContentLoaded', () => {
         ]
     };
 
-    function renderCode(code) {
+    function renderCode(code, isLivePreview = true) {
         let cleanedCode = cleanImageUrls(code);
+        
+        // Agar live preview hai aur multiple files (<next>) hain, toh ek visual line dikhao
+        if (isLivePreview) {
+            cleanedCode = cleanedCode.replace(/<next>/gi, '<hr class="bulk-divider" />');
+        }
+
         const clean = DOMPurify.sanitize(cleanedCode, purifyConfig);
         renderArea.innerHTML = clean;
         fixImages();
@@ -76,7 +89,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let debounceTimer;
     codeInput.addEventListener('input', () => {
         clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(() => { renderCode(codeInput.value); }, 150);
+        debounceTimer = setTimeout(() => { renderCode(codeInput.value, true); }, 150);
     });
 
     // ---------- PASTE BUTTON ----------
@@ -99,39 +112,71 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (err) { alert('Browser ko clipboard permission allow karo bhai.'); }
     });
 
-    // ---------- DOWNLOAD LOGIC ----------
+    // ---------- DOWNLOAD LOGIC (Now with Bulk Support) ----------
     downloadBtn.addEventListener('click', async () => {
-        if (renderArea.innerText.trim() === '' && renderArea.children.length === 0) return alert('Bhai, pehle kuch code paste karo!');
-        fixImages();
+        const fullCode = codeInput.value.trim();
+        if (fullCode === '') return alert('Bhai, pehle kuch code paste karo!');
+
+        // HTML ko <next> tag ke basis par split karo
+        const htmlSegments = fullCode.split(/<next>/i).map(seg => seg.trim()).filter(seg => seg.length > 0);
         
+        if (htmlSegments.length === 0) return alert('Valid code nahi mila!');
+
         const originalText = downloadBtn.innerText;
-        downloadBtn.innerText = 'Generating HD Image...';
         downloadBtn.disabled = true;
 
         try {
-            await document.fonts.ready;
-            await new Promise(r => setTimeout(r, 500)); 
+            // Har ek split kiye hue design par loop lagao
+            for (let i = 0; i < htmlSegments.length; i++) {
+                
+                if (htmlSegments.length > 1) {
+                    downloadBtn.innerText = `Generating ${i + 1} of ${htmlSegments.length}...`;
+                } else {
+                    downloadBtn.innerText = 'Generating HD Image...';
+                }
 
-            const pixelRatio = Math.min(3, Math.max(2, window.devicePixelRatio || 1));
-            const originalPadding = renderArea.style.padding;
-            renderArea.style.padding = '48px'; 
+                // Sirf current segment ko render karo (bina visual divider ke)
+                renderCode(htmlSegments[i], false);
+
+                // Browser ko elements paint aur fonts load karne ka time do
+                await document.fonts.ready;
+                await new Promise(r => setTimeout(r, 800)); // Thoda extra wait taaki network images load ho sakein
+                fixImages();
+                
+                const pixelRatio = Math.min(3, Math.max(2, window.devicePixelRatio || 1));
+                const originalPadding = renderArea.style.padding;
+                renderArea.style.padding = '48px'; 
+                
+                const rect = renderArea.getBoundingClientRect();
+                
+                // Canvas generation
+                const canvas = await htmlToImage.toCanvas(renderArea, {
+                    pixelRatio: pixelRatio, backgroundColor: null,
+                    cacheBust: true, useCORS: true, allowTaint: false, skipAutoScale: false,
+                    canvasWidth: rect.width * pixelRatio, canvasHeight: rect.height * pixelRatio,
+                    style: { transform: 'scale(1)', transformOrigin: 'top left', margin: '0' }
+                });
+
+                renderArea.style.padding = originalPadding;
+                canvas.getContext('2d').imageSmoothingEnabled = true;
+                canvas.getContext('2d').imageSmoothingQuality = 'high';
+
+                // File download trigger
+                const link = document.createElement('a');
+                // Agar bulk hai toh suffix add karo (e.g., export-1.png, export-2.png)
+                link.download = htmlSegments.length > 1 ? `jss-design-canvas-export-${i + 1}.png` : 'jss-design-canvas-export.png';
+                link.href = canvas.toDataURL('image/png');
+                link.click();
+
+                // Doosri file download hone se pehle thoda pause taaki browser freeze na ho
+                if (i < htmlSegments.length - 1) {
+                    await new Promise(r => setTimeout(r, 500));
+                }
+            }
             
-            const rect = renderArea.getBoundingClientRect();
-            const canvas = await htmlToImage.toCanvas(renderArea, {
-                pixelRatio: pixelRatio, backgroundColor: null, // <-- FIXED: Changed from '#ffffff' to null
-                cacheBust: true, useCORS: true, allowTaint: false, skipAutoScale: false,
-                canvasWidth: rect.width * pixelRatio, canvasHeight: rect.height * pixelRatio,
-                style: { transform: 'scale(1)', transformOrigin: 'top left', margin: '0' }
-            });
+            // Sab hone ke baad original pura code wapas preview mein daal do (with dividers)
+            renderCode(fullCode, true);
 
-            renderArea.style.padding = originalPadding;
-            canvas.getContext('2d').imageSmoothingEnabled = true;
-            canvas.getContext('2d').imageSmoothingQuality = 'high';
-
-            const link = document.createElement('a');
-            link.download = 'jss-design-canvas-export.png';
-            link.href = canvas.toDataURL('image/png');
-            link.click();
         } catch (error) {
             alert(`Kuch gadbad ho gayi. Error: ${error.message.substring(0, 100)}`);
         } finally {
@@ -246,7 +291,6 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             let nextVersion = 1;
             
-            // Step A: Check existing files in folder to calculate 'vN'
             const contentRes = await fetch(`https://api.github.com/repos/${githubUser}/${REPO_NAME}/contents/${folderName}`, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
@@ -255,7 +299,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 const files = await contentRes.json();
                 let maxVersion = 0;
                 
-                // Read all files starting with 'v' and ending with '.html'
                 files.forEach(f => {
                     const match = f.name.match(/^v(\d+)\.html$/);
                     if (match) {
@@ -263,18 +306,15 @@ document.addEventListener('DOMContentLoaded', () => {
                         if (verNum > maxVersion) maxVersion = verNum;
                     }
                 });
-                nextVersion = maxVersion + 1; // e.g., if v1 and v2 exist, next is v3
+                nextVersion = maxVersion + 1;
             } else if (contentRes.status !== 404) {
-                // If error is not 404 (Not Found), something else broke
                 throw new Error("Folder contents padhne mein error aayi.");
             }
-            // (If 404, it means folder is new/empty, so nextVersion remains 1)
 
             const fileName = `v${nextVersion}.html`;
             const filePath = `${folderName}/${fileName}`;
             const base64Content = encodeBase64Safe(codeContent);
 
-            // Step B: Save file directly via PUT
             const saveRes = await fetch(`https://api.github.com/repos/${githubUser}/${REPO_NAME}/contents/${filePath}`, {
                 method: 'PUT',
                 headers: {
@@ -289,15 +329,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
             if (!saveRes.ok) throw new Error("Save fail ho gaya bhai 😭");
 
-            // Success Updates
             if (isNewFolder) {
                 alert(`Naya folder '${folderName}' ban gaya aur design '${fileName}' save ho gayi! ✅`);
-                fetchFolders(token); // Reload folder list
+                fetchFolders(token);
             } else {
                 btnElement.innerHTML = 'Saved! ✅';
                 btnElement.style.background = '#2e7d32';
                 setTimeout(() => {
-                    saveModal.classList.remove('active'); // Close modal
+                    saveModal.classList.remove('active');
                 }, 1000);
             }
 
