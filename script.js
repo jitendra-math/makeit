@@ -70,7 +70,8 @@ document.addEventListener('DOMContentLoaded', () => {
         ]
     };
 
-    function renderCode(code, isLivePreview = true) {
+    // Note: Isko global banaya gaya hai taaki window.exportForPuppeteer isko access kar sake
+    window.renderCode = function(code, isLivePreview = true) {
         let cleanedCode = cleanImageUrls(code);
         
         // Agar live preview hai aur multiple files (<next>) hain, toh ek visual line dikhao
@@ -81,7 +82,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const clean = DOMPurify.sanitize(cleanedCode, purifyConfig);
         renderArea.innerHTML = clean;
         fixImages();
-    }
+    };
 
     codeInput.value = '';
     renderArea.innerHTML = '';
@@ -89,7 +90,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let debounceTimer;
     codeInput.addEventListener('input', () => {
         clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(() => { renderCode(codeInput.value, true); }, 150);
+        debounceTimer = setTimeout(() => { window.renderCode(codeInput.value, true); }, 150);
     });
 
     // ---------- PASTE BUTTON ----------
@@ -136,7 +137,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
 
                 // Sirf current segment ko render karo (bina visual divider ke)
-                renderCode(htmlSegments[i], false);
+                window.renderCode(htmlSegments[i], false);
 
                 // Browser ko elements paint aur fonts load karne ka time do
                 await document.fonts.ready;
@@ -175,7 +176,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             
             // Sab hone ke baad original pura code wapas preview mein daal do (with dividers)
-            renderCode(fullCode, true);
+            window.renderCode(fullCode, true);
 
         } catch (error) {
             alert(`Kuch gadbad ho gayi. Error: ${error.message.substring(0, 100)}`);
@@ -349,3 +350,41 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 });
+
+// ==========================================
+// 🔥 PUPPETEER API BACKDOOR
+// ==========================================
+window.exportForPuppeteer = async function(htmlContent) {
+    // Code render karo (isLivePreview = false taaki bulk visual dividers na aayein)
+    window.renderCode(htmlContent, false);
+    
+    // Fonts aur images load hone ka wait karo
+    await document.fonts.ready;
+    await new Promise(r => setTimeout(r, 1000));
+    
+    // Yahan hume fixImages call karne ki zaroorat nahi kyunki renderCode me woh already call ho raha hai,
+    // lekin safe side ke liye network images ke liye delay diya hai.
+
+    // Canvas preparation (same as your downloadBtn logic)
+    const renderArea = document.getElementById('render-area');
+    const pixelRatio = 2; // API consistency ke liye fixed resolution
+    const originalPadding = renderArea.style.padding;
+    renderArea.style.padding = '48px'; 
+    
+    const rect = renderArea.getBoundingClientRect();
+    
+    const canvas = await htmlToImage.toCanvas(renderArea, {
+        pixelRatio: pixelRatio, 
+        backgroundColor: null,
+        cacheBust: true, 
+        useCORS: true,
+        canvasWidth: rect.width * pixelRatio, 
+        canvasHeight: rect.height * pixelRatio,
+        style: { transform: 'scale(1)', transformOrigin: 'top left', margin: '0' }
+    });
+
+    renderArea.style.padding = originalPadding;
+    
+    // Direct Base64 return instead of triggering <a> link click
+    return canvas.toDataURL('image/png');
+};
