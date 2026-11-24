@@ -59,21 +59,21 @@ document.addEventListener('DOMContentLoaded', () => {
             'footer', 'main', 'article', 'nav', 'aside', 'form', 'input',
             'label', 'table', 'tr', 'td', 'th', 'thead', 'tbody', 'br', 'hr',
             'strong', 'em', 'b', 'i', 'u', 'small', 'mark', 'figure', 'figcaption',
-            'blockquote', 'pre', 'code', 'iframe', 'link', 'style' 
+            'blockquote', 'pre', 'code', 'iframe', 'link', 'style'
         ],
         ALLOWED_ATTR: [
             'class', 'id', 'style', 'src', 'alt', 'href', 'target', 'rel',
             'width', 'height', 'fill', 'stroke', 'viewBox', 'd', 'cx', 'cy',
             'r', 'rx', 'ry', 'x', 'y', 'type', 'placeholder', 'value',
             'disabled', 'checked', 'selected', 'xmlns', 'transform', 'stroke-width',
-            'stroke-linecap', 'stroke-linejoin', 'crossorigin', 'integrity', 'referrerpolicy' 
+            'stroke-linecap', 'stroke-linejoin', 'crossorigin', 'integrity', 'referrerpolicy'
         ]
     };
 
-    // Note: Isko global banaya gaya hai taaki window.exportForPuppeteer isko access kar sake
+    // Global render function taaki Puppeteer backdoor isko access kar sake
     window.renderCode = function(code, isLivePreview = true) {
         let cleanedCode = cleanImageUrls(code);
-        
+
         // Agar live preview hai aur multiple files (<next>) hain, toh ek visual line dikhao
         if (isLivePreview) {
             cleanedCode = cleanedCode.replace(/<next>/gi, '<hr class="bulk-divider" />');
@@ -102,7 +102,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 codeInput.dispatchEvent(new Event('input'));
                 const originalText = pasteBtn.innerText;
                 pasteBtn.innerText = 'Pasted! ✓';
-                pasteBtn.style.backgroundColor = '#e8f5e9'; 
+                pasteBtn.style.backgroundColor = '#e8f5e9';
                 pasteBtn.style.borderColor = '#c8e6c9';
                 setTimeout(() => {
                     pasteBtn.innerText = originalText;
@@ -120,7 +120,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // HTML ko <next> tag ke basis par split karo
         const htmlSegments = fullCode.split(/<next>/i).map(seg => seg.trim()).filter(seg => seg.length > 0);
-        
+
         if (htmlSegments.length === 0) return alert('Valid code nahi mila!');
 
         const originalText = downloadBtn.innerText;
@@ -129,7 +129,7 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             // Har ek split kiye hue design par loop lagao
             for (let i = 0; i < htmlSegments.length; i++) {
-                
+
                 if (htmlSegments.length > 1) {
                     downloadBtn.innerText = `Generating ${i + 1} of ${htmlSegments.length}...`;
                 } else {
@@ -141,15 +141,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 // Browser ko elements paint aur fonts load karne ka time do
                 await document.fonts.ready;
-                await new Promise(r => setTimeout(r, 800)); // Thoda extra wait taaki network images load ho sakein
+                await new Promise(r => setTimeout(r, 800));
                 fixImages();
-                
+
                 const pixelRatio = Math.min(3, Math.max(2, window.devicePixelRatio || 1));
                 const originalPadding = renderArea.style.padding;
-                renderArea.style.padding = '48px'; 
-                
+                const originalTransition = renderArea.style.transition;
+
+                renderArea.style.transition = 'none';
+                renderArea.style.padding = '48px';
+                void renderArea.offsetHeight;
+
                 const rect = renderArea.getBoundingClientRect();
-                
+
                 // Canvas generation
                 const canvas = await htmlToImage.toCanvas(renderArea, {
                     pixelRatio: pixelRatio, backgroundColor: null,
@@ -159,12 +163,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
 
                 renderArea.style.padding = originalPadding;
+                renderArea.style.transition = originalTransition;
                 canvas.getContext('2d').imageSmoothingEnabled = true;
                 canvas.getContext('2d').imageSmoothingQuality = 'high';
 
                 // File download trigger
                 const link = document.createElement('a');
-                // Agar bulk hai toh suffix add karo (e.g., export-1.png, export-2.png)
                 link.download = htmlSegments.length > 1 ? `jss-design-canvas-export-${i + 1}.png` : 'jss-design-canvas-export.png';
                 link.href = canvas.toDataURL('image/png');
                 link.click();
@@ -174,7 +178,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     await new Promise(r => setTimeout(r, 500));
                 }
             }
-            
+
             // Sab hone ke baad original pura code wapas preview mein daal do (with dividers)
             window.renderCode(fullCode, true);
 
@@ -213,7 +217,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const token = getToken();
         if (!token) return alert('Token ke bina kaam nahi chalega bhai 😭');
 
-        saveModal.classList.add('active'); // Open Modal
+        saveModal.classList.add('active');
         await fetchFolders(token);
     });
 
@@ -243,7 +247,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             const data = await repoRes.json();
-            const folders = data.filter(item => item.type === 'dir'); // Sirf folders
+            const folders = data.filter(item => item.type === 'dir');
 
             if (folders.length === 0) {
                 folderListContainer.innerHTML = '<p style="text-align:center; color:#888; font-size:13px; padding: 20px;">Koi project folder nahi hai. Naya banao!</p>';
@@ -270,11 +274,9 @@ document.addEventListener('DOMContentLoaded', () => {
     newFolderBtn.addEventListener('click', () => {
         const folderName = prompt("Naye project (folder) ka naam batao (e.g., Dashboard_UI):");
         if (!folderName || folderName.trim() === '') return;
-        
-        // Remove spaces and special chars to make it GitHub friendly
+
         const safeFolderName = folderName.trim().replace(/[^a-zA-Z0-9_-]/g, "_");
-        
-        // Direct save to this new folder
+
         const tempBtn = document.createElement('button');
         saveToFolder(safeFolderName, tempBtn, true);
     });
@@ -283,7 +285,7 @@ document.addEventListener('DOMContentLoaded', () => {
     window.saveToFolder = async function(folderName, btnElement, isNewFolder = false) {
         const token = getToken();
         const codeContent = codeInput.value.trim();
-        
+
         if (btnElement.innerText) {
             btnElement.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Saving';
             btnElement.disabled = true;
@@ -291,7 +293,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         try {
             let nextVersion = 1;
-            
+
             const contentRes = await fetch(`https://api.github.com/repos/${githubUser}/${REPO_NAME}/contents/${folderName}`, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
@@ -299,7 +301,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (contentRes.ok) {
                 const files = await contentRes.json();
                 let maxVersion = 0;
-                
+
                 files.forEach(f => {
                     const match = f.name.match(/^v(\d+)\.html$/);
                     if (match) {
@@ -352,39 +354,82 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // ==========================================
-// 🔥 PUPPETEER API BACKDOOR
+// 🔥 PUPPETEER API BACKDOOR (Single + Bulk)
 // ==========================================
-window.exportForPuppeteer = async function(htmlContent) {
-    // Code render karo (isLivePreview = false taaki bulk visual dividers na aayein)
-    window.renderCode(htmlContent, false);
-    
-    // Fonts aur images load hone ka wait karo
-    await document.fonts.ready;
-    await new Promise(r => setTimeout(r, 1000));
-    
-    // Yahan hume fixImages call karne ki zaroorat nahi kyunki renderCode me woh already call ho raha hai,
-    // lekin safe side ke liye network images ke liye delay diya hai.
+async function renderSingleSegmentToDataUrl(segmentHtml) {
+    window.renderCode(segmentHtml, false);
 
-    // Canvas preparation (same as your downloadBtn logic)
+    // Fonts load hone ka wait
+    await document.fonts.ready;
+
+    // External images load hone ka smart wait (max 4s per image)
     const renderArea = document.getElementById('render-area');
-    const pixelRatio = 2; // API consistency ke liye fixed resolution
+    const imgs = Array.from(renderArea.querySelectorAll('img'));
+    await Promise.all(
+        imgs.map((img) => {
+            if (img.complete) return Promise.resolve();
+            return new Promise((resolve) => {
+                const timer = setTimeout(resolve, 4000);
+                img.addEventListener('load', () => { clearTimeout(timer); resolve(); }, { once: true });
+                img.addEventListener('error', () => { clearTimeout(timer); resolve(); }, { once: true });
+            });
+        })
+    );
+
+    // Tailwind CDN styles + layout paint settle hone ka brief wait
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    await new Promise((r) => setTimeout(r, 350));
+
+    const pixelRatio = 2;
     const originalPadding = renderArea.style.padding;
-    renderArea.style.padding = '48px'; 
-    
+    const originalTransition = renderArea.style.transition;
+
+    // Transition off karo taaki 48px padding turant apply ho aur edges crop na hon
+    renderArea.style.transition = 'none';
+    renderArea.style.padding = '48px';
+    void renderArea.offsetHeight;
+
     const rect = renderArea.getBoundingClientRect();
-    
+
     const canvas = await htmlToImage.toCanvas(renderArea, {
-        pixelRatio: pixelRatio, 
+        pixelRatio: pixelRatio,
         backgroundColor: null,
-        cacheBust: true, 
+        cacheBust: true,
         useCORS: true,
-        canvasWidth: rect.width * pixelRatio, 
+        canvasWidth: rect.width * pixelRatio,
         canvasHeight: rect.height * pixelRatio,
         style: { transform: 'scale(1)', transformOrigin: 'top left', margin: '0' }
     });
 
     renderArea.style.padding = originalPadding;
-    
-    // Direct Base64 return instead of triggering <a> link click
+    renderArea.style.transition = originalTransition;
+
     return canvas.toDataURL('image/png');
+}
+
+// Single design (existing scripts ke liye 100% compatible)
+window.exportForPuppeteer = async function(htmlContent) {
+    return await renderSingleSegmentToDataUrl(htmlContent);
+};
+
+// Bulk designs (<next> string ya HTML array dono support karta hai)
+window.exportBulkForPuppeteer = async function(input) {
+    const segments = Array.isArray(input)
+        ? input.map((s) => String(s || '').trim()).filter(Boolean)
+        : String(input || '').split(/<next>/i).map((s) => s.trim()).filter(Boolean);
+
+    if (segments.length === 0) {
+        throw new Error('Koi valid HTML segment nahi mila.');
+    }
+
+    const results = [];
+    for (let i = 0; i < segments.length; i++) {
+        const dataUrl = await renderSingleSegmentToDataUrl(segments[i]);
+        results.push({
+            index: i + 1,
+            filename: `design-${i + 1}.png`,
+            dataUrl
+        });
+    }
+    return results;
 };
