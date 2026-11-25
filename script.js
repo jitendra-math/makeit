@@ -1,3 +1,188 @@
+// ==========================================
+// ⚡ FAST ASSET & FONT CACHE (Shared by Manual + Puppeteer)
+// ==========================================
+const loadedImageUrlCache = new Set();
+let cachedFontEmbedCSS = null;
+let cachedFontSignature = null;
+
+function getFontSignature(container) {
+    const links = Array.from(container.querySelectorAll('link[rel="stylesheet"]'))
+        .map((l) => l.getAttribute('href') || '')
+        .sort()
+        .join('|');
+    const styles = Array.from(container.querySelectorAll('style'))
+        .map((s) => s.textContent || '')
+        .filter((txt) => /@font-face|@import/i.test(txt))
+        .join('|');
+    return `${links}::${styles}`;
+}
+
+async function waitForInlineStylesheets(container) {
+    const links = Array.from(container.querySelectorAll('link[rel="stylesheet"]'));
+    if (!links.length) return;
+    await Promise.all(
+        links.map((link) => {
+            if (link.sheet) return Promise.resolve();
+            return new Promise((resolve) => {
+                const timer = setTimeout(resolve, 3500);
+                link.addEventListener('load', () => { clearTimeout(timer); resolve(); }, { once: true });
+                link.addEventListener('error', () => { clearTimeout(timer); resolve(); }, { once: true });
+            });
+        })
+    );
+}
+
+function extractBgImageUrls(container) {
+    const urls = new Set();
+    const elements = container.querySelectorAll('[style*="url"]');
+    elements.forEach((el) => {
+        const bg = el.style.backgroundImage || el.style.background || '';
+        const matches = bg.matchAll(/url\((['"]?)(https?:\/\/[^'")]+)\1\)/gi);
+        for (const m of matches) {
+            if (m[2]) urls.add(m[2]);
+        }
+    });
+    return Array.from(urls);
+}
+
+function preloadImageUrl(url, timeoutMs = 4000) {
+    if (!url || loadedImageUrlCache.has(url)) return Promise.resolve();
+    return new Promise((resolve) => {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        const timer = setTimeout(resolve, timeoutMs);
+        img.onload = () => {
+            clearTimeout(timer);
+            loadedImageUrlCache.add(url);
+            resolve();
+        };
+        img.onerror = () => {
+            clearTimeout(timer);
+            resolve();
+        };
+        img.src = url;
+    });
+}
+
+async function waitForAllImages(container) {
+    // 1. <img> tags
+    const imgTasks = Array.from(container.querySelectorAll('img')).map((img) => {
+        if (!img.src) return Promise.resolve();
+        if (img.complete && img.naturalWidth > 0) {
+            loadedImageUrlCache.add(img.src);
+            return Promise.resolve();
+        }
+        return new Promise((resolve) => {
+            const timer = setTimeout(resolve, 4000);
+            img.addEventListener('load', () => {
+                clearTimeout(timer);
+                loadedImageUrlCache.add(img.src);
+                resolve();
+            }, { once: true });
+            img.addEventListener('error', () => {
+                clearTimeout(timer);
+                resolve();
+            }, { once: true });
+        });
+    });
+
+    // 2. Inline CSS background-image: url(...) (e.g. i.ibb.co)
+    const bgTasks = extractBgImageUrls(container).map((url) => preloadImageUrl(url, 4000));
+
+    await Promise.all([...imgTasks, ...bgTasks]);
+}
+
+async function getOptimizedFontEmbedCSS(renderArea) {
+    await waitForInlineStylesheets(renderArea);
+    await document.fonts.ready;
+
+    const currentSig = getFontSignature(renderArea);
+
+    // Same fonts hain toh cached base64 CSS seedha reuse karo (0ms overhead)
+    if (cachedFontEmbedCSS !== null && cachedFontSignature === currentSig) {
+        return cachedFontEmbedCSS;
+    }
+
+    if (typeof htmlToImage !== 'undefined' && typeof htmlToImage.getFontEmbedCSS === 'function') {
+        try {
+            // Sirf woff2 embed karo taaki purane ttf/eot download na hon
+            cachedFontEmbedCSS = await htmlToImage.getFontEmbedCSS(renderArea, {
+                preferredFontFormat: 'woff2'
+            });
+            cachedFontSignature = currentSig;
+            return cachedFontEmbedCSS;
+        } catch (err) {
+            console.warn('Font CSS cache build skipped:', err);
+        }
+    }
+
+    return undefined;
+}
+
+async function captureRenderAreaToCanvas(pixelRatio = 2) {
+    const renderArea = document.getElementById('render-area');
+
+    // Fonts aur saari images (<img> + CSS background-image) parallel mein ready karo
+    const [fontEmbedCSS] = await Promise.all([
+        getOptimizedFontEmbedCSS(renderArea),
+        waitForAllImages(renderArea)
+    ]);
+
+    // Tailwind CDN styles + layout paint settle hone ka minimal wait
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    await new Promise((r) => setTimeout(r, 80));
+
+    const originalPadding = renderArea.style.padding;
+    const originalTransition = renderArea.style.transition;
+
+    try {
+        // Transition off karo taaki 48px padding turant apply ho aur edges crop na hon
+        renderArea.style.transition = 'none';
+        renderArea.style.padding = '48px';
+        void renderArea.offsetHeight;
+
+        const rect = renderArea.getBoundingClientRect();
+
+        const canvasOptions = {
+            pixelRatio: pixelRatio,
+            backgroundColor: null,
+            cacheBust: false, // Browser cache reuse hoga (har card par re-download band)
+            useCORS: true,
+            allowTaint: false,
+            skipAutoScale: false,
+            preferredFontFormat: 'woff2',
+            canvasWidth: rect.width * pixelRatio,
+            canvasHeight: rect.height * pixelRatio,
+            style: { transform: 'scale(1)', transformOrigin: 'top left', margin: '0' }
+        };
+
+        if (fontEmbedCSS) {
+            canvasOptions.fontEmbedCSS = fontEmbedCSS;
+        }
+
+        let canvas;
+        try {
+            canvas = await htmlToImage.toCanvas(renderArea, canvasOptions);
+        } catch (firstErr) {
+            // Rare CORS cache mismatch par sirf tab cacheBust: true ke saath fallback retry
+            canvas = await htmlToImage.toCanvas(renderArea, { ...canvasOptions, cacheBust: true });
+        }
+
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = 'high';
+        }
+        return canvas;
+    } finally {
+        renderArea.style.padding = originalPadding;
+        renderArea.style.transition = originalTransition;
+    }
+}
+
+// ==========================================
+// MAIN APP LOGIC
+// ==========================================
 document.addEventListener('DOMContentLoaded', () => {
     const codeInput = document.getElementById('code-input');
     const renderArea = document.getElementById('render-area');
@@ -87,6 +272,11 @@ document.addEventListener('DOMContentLoaded', () => {
     codeInput.value = '';
     renderArea.innerHTML = '';
 
+    // Page load hote hi Inter + FontAwesome fonts ko background mein pre-warm karke cache kar lo
+    window.addEventListener('load', () => {
+        getOptimizedFontEmbedCSS(renderArea).catch(() => {});
+    });
+
     let debounceTimer;
     codeInput.addEventListener('input', () => {
         clearTimeout(debounceTimer);
@@ -113,69 +303,35 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (err) { alert('Browser ko clipboard permission allow karo bhai.'); }
     });
 
-    // ---------- DOWNLOAD LOGIC (Now with Bulk Support) ----------
+    // ---------- DOWNLOAD LOGIC (Fast Bulk Support) ----------
     downloadBtn.addEventListener('click', async () => {
         const fullCode = codeInput.value.trim();
         if (fullCode === '') return alert('Bhai, pehle kuch code paste karo!');
 
-        // HTML ko <next> tag ke basis par split karo
         const htmlSegments = fullCode.split(/<next>/i).map(seg => seg.trim()).filter(seg => seg.length > 0);
-
         if (htmlSegments.length === 0) return alert('Valid code nahi mila!');
 
         const originalText = downloadBtn.innerText;
         downloadBtn.disabled = true;
 
         try {
-            // Har ek split kiye hue design par loop lagao
+            const pixelRatio = Math.min(3, Math.max(2, window.devicePixelRatio || 1));
+
             for (let i = 0; i < htmlSegments.length; i++) {
+                downloadBtn.innerText = htmlSegments.length > 1
+                    ? `Generating ${i + 1} of ${htmlSegments.length}...`
+                    : 'Generating HD Image...';
 
-                if (htmlSegments.length > 1) {
-                    downloadBtn.innerText = `Generating ${i + 1} of ${htmlSegments.length}...`;
-                } else {
-                    downloadBtn.innerText = 'Generating HD Image...';
-                }
-
-                // Sirf current segment ko render karo (bina visual divider ke)
                 window.renderCode(htmlSegments[i], false);
+                const canvas = await captureRenderAreaToCanvas(pixelRatio);
 
-                // Browser ko elements paint aur fonts load karne ka time do
-                await document.fonts.ready;
-                await new Promise(r => setTimeout(r, 800));
-                fixImages();
-
-                const pixelRatio = Math.min(3, Math.max(2, window.devicePixelRatio || 1));
-                const originalPadding = renderArea.style.padding;
-                const originalTransition = renderArea.style.transition;
-
-                renderArea.style.transition = 'none';
-                renderArea.style.padding = '48px';
-                void renderArea.offsetHeight;
-
-                const rect = renderArea.getBoundingClientRect();
-
-                // Canvas generation
-                const canvas = await htmlToImage.toCanvas(renderArea, {
-                    pixelRatio: pixelRatio, backgroundColor: null,
-                    cacheBust: true, useCORS: true, allowTaint: false, skipAutoScale: false,
-                    canvasWidth: rect.width * pixelRatio, canvasHeight: rect.height * pixelRatio,
-                    style: { transform: 'scale(1)', transformOrigin: 'top left', margin: '0' }
-                });
-
-                renderArea.style.padding = originalPadding;
-                renderArea.style.transition = originalTransition;
-                canvas.getContext('2d').imageSmoothingEnabled = true;
-                canvas.getContext('2d').imageSmoothingQuality = 'high';
-
-                // File download trigger
                 const link = document.createElement('a');
                 link.download = htmlSegments.length > 1 ? `jss-design-canvas-export-${i + 1}.png` : 'jss-design-canvas-export.png';
                 link.href = canvas.toDataURL('image/png');
                 link.click();
 
-                // Doosri file download hone se pehle thoda pause taaki browser freeze na ho
                 if (i < htmlSegments.length - 1) {
-                    await new Promise(r => setTimeout(r, 500));
+                    await new Promise(r => setTimeout(r, 250));
                 }
             }
 
@@ -209,7 +365,6 @@ document.addEventListener('DOMContentLoaded', () => {
         return token;
     }
 
-    // Modal Handlers
     cloudSaveBtn.addEventListener('click', async () => {
         const codeContent = codeInput.value.trim();
         if (!codeContent) return alert('Save karne ke liye code paste karo pehle!');
@@ -223,7 +378,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     closeModalBtn.addEventListener('click', () => saveModal.classList.remove('active'));
 
-    // 1. Fetch Folders
     async function fetchFolders(token) {
         folderListContainer.innerHTML = '<p style="text-align:center; color:#888; font-size:14px;"><i class="fa-solid fa-spinner fa-spin"></i> Fetching folders...</p>';
         try {
@@ -270,18 +424,15 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // 2. New Folder Button (Creates virtual path)
     newFolderBtn.addEventListener('click', () => {
         const folderName = prompt("Naye project (folder) ka naam batao (e.g., Dashboard_UI):");
         if (!folderName || folderName.trim() === '') return;
 
         const safeFolderName = folderName.trim().replace(/[^a-zA-Z0-9_-]/g, "_");
-
         const tempBtn = document.createElement('button');
         saveToFolder(safeFolderName, tempBtn, true);
     });
 
-    // 3. The Brain: Save logic with Version Mapping (v1, v2, v3...)
     window.saveToFolder = async function(folderName, btnElement, isNewFolder = false) {
         const token = getToken();
         const codeContent = codeInput.value.trim();
@@ -354,65 +505,14 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // ==========================================
-// 🔥 PUPPETEER API BACKDOOR (Single + Bulk)
+// 🔥 PUPPETEER API BACKDOOR (Fast Single + Bulk)
 // ==========================================
-async function renderSingleSegmentToDataUrl(segmentHtml) {
-    window.renderCode(segmentHtml, false);
-
-    // Fonts load hone ka wait
-    await document.fonts.ready;
-
-    // External images load hone ka smart wait (max 4s per image)
-    const renderArea = document.getElementById('render-area');
-    const imgs = Array.from(renderArea.querySelectorAll('img'));
-    await Promise.all(
-        imgs.map((img) => {
-            if (img.complete) return Promise.resolve();
-            return new Promise((resolve) => {
-                const timer = setTimeout(resolve, 4000);
-                img.addEventListener('load', () => { clearTimeout(timer); resolve(); }, { once: true });
-                img.addEventListener('error', () => { clearTimeout(timer); resolve(); }, { once: true });
-            });
-        })
-    );
-
-    // Tailwind CDN styles + layout paint settle hone ka brief wait
-    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-    await new Promise((r) => setTimeout(r, 350));
-
-    const pixelRatio = 2;
-    const originalPadding = renderArea.style.padding;
-    const originalTransition = renderArea.style.transition;
-
-    // Transition off karo taaki 48px padding turant apply ho aur edges crop na hon
-    renderArea.style.transition = 'none';
-    renderArea.style.padding = '48px';
-    void renderArea.offsetHeight;
-
-    const rect = renderArea.getBoundingClientRect();
-
-    const canvas = await htmlToImage.toCanvas(renderArea, {
-        pixelRatio: pixelRatio,
-        backgroundColor: null,
-        cacheBust: true,
-        useCORS: true,
-        canvasWidth: rect.width * pixelRatio,
-        canvasHeight: rect.height * pixelRatio,
-        style: { transform: 'scale(1)', transformOrigin: 'top left', margin: '0' }
-    });
-
-    renderArea.style.padding = originalPadding;
-    renderArea.style.transition = originalTransition;
-
-    return canvas.toDataURL('image/png');
-}
-
-// Single design (existing scripts ke liye 100% compatible)
 window.exportForPuppeteer = async function(htmlContent) {
-    return await renderSingleSegmentToDataUrl(htmlContent);
+    window.renderCode(htmlContent, false);
+    const canvas = await captureRenderAreaToCanvas(2);
+    return canvas.toDataURL('image/png');
 };
 
-// Bulk designs (<next> string ya HTML array dono support karta hai)
 window.exportBulkForPuppeteer = async function(input) {
     const segments = Array.isArray(input)
         ? input.map((s) => String(s || '').trim()).filter(Boolean)
@@ -424,11 +524,12 @@ window.exportBulkForPuppeteer = async function(input) {
 
     const results = [];
     for (let i = 0; i < segments.length; i++) {
-        const dataUrl = await renderSingleSegmentToDataUrl(segments[i]);
+        window.renderCode(segments[i], false);
+        const canvas = await captureRenderAreaToCanvas(2);
         results.push({
             index: i + 1,
             filename: `design-${i + 1}.png`,
-            dataUrl
+            dataUrl: canvas.toDataURL('image/png')
         });
     }
     return results;
